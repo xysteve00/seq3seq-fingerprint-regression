@@ -17,6 +17,8 @@ def build_base_hparams():
         max_gradient_norm=5.0,
         alpha=0.01,
         reg=True,
+        # # of properties for regression, for classification, it's always 1
+        num_prop = 3,
         # If we have the prediction (with label) task.
         label_states=True,
         # If we use a recovery task as regularization.
@@ -31,7 +33,7 @@ def build_base_hparams():
         # MLP Model Parameters.
         #
         # Default MLP output number.
-        mlp_output_nums=[1],
+        mlp_output_nums=[3],
         # Loss Parameters.
         # Loss type, e.g., SparseXentLoss, etc.
         loss_type="MSELoss",
