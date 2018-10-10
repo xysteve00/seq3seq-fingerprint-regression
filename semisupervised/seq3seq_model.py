@@ -93,7 +93,8 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
         "learning_rate_decay_factor",
         "label_states",
         "alpha",
-        "reg"
+        "reg",
+        "num_prop"
     ]
 
     def __init__(  # pylint: disable=too-many-locals, too-many-arguments, too-many-branches, super-init-not-called, too-many-statements
@@ -128,6 +129,7 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
         self.alpha = hparams.alpha  # Get coefficient for combined loss function
         self.global_step = tf.Variable(0, trainable=False)
         self.reg = hparams.reg
+        self.num_prop = hparams.num_prop
 
         logging.info(
             "Initializing model with hparams: %s" % str(self.hparams.to_json()))
@@ -204,17 +206,29 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
 
             # Prediction network definition.
             pred_net_cls = getattr(pred_models, hparams.pred_net_type)
-            pred = pred_net_cls(hparams)(fp_tensor, reuse=(bucket_id > 0))
+            if (self.num_prop == 1):
+                pred = pred_net_cls(hparams)(fp_tensor, reuse=(bucket_id > 0))
+            elif (self.num_prop > 1):
+                pred_mprop = pred_net_cls(hparams)(fp_tensor, reuse=(bucket_id > 0))
+                pred = pred_mprop[0]
 
             # Prediction loss.
             loss_cls = getattr(losses, hparams.loss_type)
             loss_sup = loss_cls(hparams)(
-                input_tensor=pred, label_tensor=encoder_labels)
+                input_tensor= pred if self.num_prop == 1 else pred_mprop, label_tensor=encoder_labels)
 
             # Metrics.
             metric_cls = getattr(metrics, hparams.metric_type)
-            metric_ops = metric_cls(hparams)(
-                input_tensor=pred, label_tensor=encoder_labels)
+            if (self.num_prop == 1):
+                metric_ops = metric_cls(hparams)(
+                    input_tensor=pred, label_tensor=encoder_labels)
+            elif (self.num_prop > 1):
+                metric_ops_mprop = []
+                pred_mprop = tf.transpose(pred_mprop,[1,0])
+                for i in range(self.num_prop):
+                    metric_ops_mprop.append(metric_cls(hparams)(
+                        input_tensor=pred_mprop[i], label_tensor=encoder_labels[i]))
+                metric_ops = metric_ops_mprop
 
             return pred, loss_sup, metric_ops
 
@@ -228,8 +242,14 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
                 tf.placeholder(
                     tf.int32, shape=[None], name="encoder{0}".format(i)))
         if self.label_states:
-            self.encoder_labels.append(
-                tf.placeholder(
+            if self.reg and self.num_prop > 1:
+                for i in range(self.num_prop):
+                    self.encoder_labels.append(
+                        tf.placeholder(
+                        tf.float32, shape=[None], name="label{0}".format(i)))
+            else:
+                self.encoder_labels.append(
+                    tf.placeholder(
                     tf.float32 if self.reg else tf.int32, shape=[None], name="label{0}".format(0)))
         for i in range(buckets[-1][1] + 1):
             self.decoder_inputs.append(
@@ -278,7 +298,7 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
             for bucket_id in range(len(buckets)):
                 self.pred[bucket_id], self.loss_supervised[bucket_id],\
                 self.sup_metrics[bucket_id] = (
-                    pred_net(bucket_id, self.encoder_labels[0]))
+                    pred_net(bucket_id, self.encoder_labels))
 
         # Gradients and SGD update operation for training the model.
         params = tf.trainable_variables()
@@ -325,8 +345,11 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
                         tf.summary.scalar("total_loss_%d" % b, loss)
                     ] + [
                         # Supervised task evaluation metric.
+
                         tf.summary.scalar("%s_%d" % (k, b), v)
                         for k, v in self.sup_metrics[b].items()
+                    ] if self.num_prop == 1 else [tf.summary.scalar("%s_%d_%d" % (k, b, i), v)
+                        for i in range(self.num_prop) for k, v in self.sup_metrics[b][i].items()
                     ])
                 self.summary_ops.append(tf.summary.merge(bucket_summary_ops))
 
@@ -579,7 +602,20 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
                     batch_weight[batch_idx] = 0.0
             batch_weights.append(batch_weight)
         if label_states:
-            batch_labels.append(np.array(labels, dtype=np.int32))
+            if self.reg:
+                if self.num_prop>1:
+                    for length_idx in range(self.num_prop):
+                        batch_labels.append(
+                            np.array(
+                                [
+                                    labels[batch_idx][length_idx]
+                                    for batch_idx in range(real_batch_size)
+                                ],
+                                dtype=np.float32))
+                else:
+                    batch_labels.append(np.array(labels, dtype=np.float32))
+            else:
+                batch_labels.append(np.array(labels, dtype=np.int32))
             return batch_encoder_inputs, batch_decoder_inputs, batch_labels, batch_weights
         return batch_encoder_inputs, batch_decoder_inputs, None, batch_weights
 
@@ -636,7 +672,11 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
             input_feed[self.decoder_inputs[l].name] = decoder_inputs[l]
             input_feed[self.target_weights[l].name] = target_weights[l]
         if encoder_labels is not None:
-            input_feed[self.encoder_labels[0].name] = encoder_labels[0]
+            if self.reg and self.num_prop>1:
+                for l in range(self.num_prop):
+                    input_feed[self.encoder_labels[l].name] = encoder_labels[l]
+            else:
+                input_feed[self.encoder_labels[0].name] = encoder_labels[0]
 
         batch_size = encoder_inputs[0].shape[0]
         # Since our targets are decoder inputs shifted by one, we need one more.

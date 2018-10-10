@@ -23,6 +23,8 @@ class BCMetric(BaseMetric):
             label_tensor: label numbers, shape: [batch_size].
         """
         with tf.name_scope("BCMetric"):
+            if not self._hparams.reg:
+                label_tensor = label_tensor[0]
             # Correct Predictions: TP + TN.
             pred = tf.argmax(input_tensor, 1)  # [batch_size]
             label = tf.to_int64(label_tensor)
@@ -53,10 +55,14 @@ class RGMetric(BaseMetric):
             label_tensor: label numbers, shape: [batch_size].
         """
         with tf.name_scope("REMetric"):
-            col_pred = (input_tensor.get_shape().as_list()[1])
-            if col_pred != 1:
-                raise AssertionError
-            input_tensor = tf.squeeze(input_tensor, 1)
+            if (self._hparams.num_prop == 1):
+                col_pred = (input_tensor.get_shape().as_list()[1])
+                if col_pred != 1:
+                    raise AssertionError
+                label_tensor = label_tensor[0]
+                input_tensor = tf.squeeze(input_tensor, 1)
+            #print("Metrix label_tensor shape"+"\n", label_tensor.get_shape().as_list())
+            #print("Metrix input_tensor shape"+"\n", input_tensor.get_shape().as_list())
             diff_pred = tf.subtract(tf.cast(label_tensor, tf.float32), tf.cast(input_tensor,tf.float32))
 
             # neg_root_mean_square_error.
