@@ -93,7 +93,7 @@ def read_data(source_path, buckets, max_size=None):
     return data_set
 
 
-def read_data_labels(source_path, label_path, reg_flag,buckets, max_size=None):  # pylint: disable=too-many-locals
+def read_data_labels(source_path, label_path, reg_flag, num_prop, buckets, max_size=None):  # pylint: disable=too-many-locals
     """Read data from source and target files and put into buckets.
 
     Args:
@@ -121,13 +121,19 @@ def read_data_labels(source_path, label_path, reg_flag,buckets, max_size=None): 
                 sys.stdout.flush()
             source_ids = [int(x) for x in source.split()]
             target_ids = [int(x) for x in source.split()]
+            if reg_flag:
+                if num_prop > 1:
+                    label_ids = [float(x) for x in label.split()]
+                else:
+                    label_ids = float(label)
+            else:
+                label_ids = int(label)
             target_ids.append(EOS_ID)
             for bucket_id, (source_size, target_size) in enumerate(buckets):
                 if len(source_ids) < source_size and len(
                         target_ids) < target_size:
                     data_set[bucket_id].append(
-                        [source_ids, target_ids,
-                         float(label) if reg_flag else int(label)])
+                        [source_ids, target_ids, label_ids])
                     break
             source = source_file.readline().strip()
             label = label_file.readline().strip()
@@ -137,12 +143,19 @@ def read_data_labels(source_path, label_path, reg_flag,buckets, max_size=None): 
 def eval_dataset(test_label_set,
                  model,
                  label_states,
+                 num_prop,
                  test_writer=None,
                  sess=None):
     """Perform an evaluation on the test dataset."""
 
     sess = sess or tf.get_default_session()
-    acms = AccumulatorWithBuckets()
+    if num_prop == 1:
+        acms = AccumulatorWithBuckets()
+    else:
+        acms = []
+        for i in range(num_prop):
+            acms.append(AccumulatorWithBuckets())
+
     for bucket_id in range(len(test_label_set)):
         length_test_set = len(test_label_set[bucket_id])
         if length_test_set == 0:
@@ -171,12 +184,22 @@ def eval_dataset(test_label_set,
                 output_encoder_states=False,
                 encoder_labels=eval_labels)
             if eval_acc_sup is not None:
-                for idx in eval_acc_sup:
-                    acms.get(idx, bucket_id).accumulate(actual_data_len,
+                if num_prop == 1:
+                    for idx in eval_acc_sup:
+                        acms.get(idx, bucket_id).accumulate(actual_data_len,
                                                         eval_acc_sup[idx])
+                else:
+                    for i in range(num_prop):
+                        for idx in eval_acc_sup[i]:
+                            acms[i].get(idx, bucket_id).accumulate(actual_data_len,
+                                                        eval_acc_sup[i][idx])
             if eval_loss is not None:
-                acms.get("eval_loss", bucket_id).accumulate(
-                    actual_data_len, eval_loss)
+                if num_prop == 1:
+                    acms.get("eval_loss", bucket_id).accumulate(
+                        actual_data_len, eval_loss)
+                else:
+                    acms[0].get("eval_loss", bucket_id).accumulate(
+                        actual_data_len, eval_loss)
             input_ph, output_ph, em_acc_op, summary_op = model.test_summary_ops[
                 bucket_id]
             em_acc, summary = sess.run(
@@ -186,24 +209,45 @@ def eval_dataset(test_label_set,
                     output_ph: np.array(output_logits)
                 })
             if em_acc is not None:
-                acms.get("em_acc", bucket_id).accumulate(
-                    actual_data_len, em_acc)
-
-        eval_ppx = math.exp(float(acms.get("eval_loss", bucket_id)
-                                  .value)) if eval_loss < 300 else float("inf")
+                if num_prop == 1:
+                    acms.get("em_acc", bucket_id).accumulate(
+                        actual_data_len, em_acc)
+                else:
+                    acms[0].get("em_acc", bucket_id).accumulate(
+                        actual_data_len, em_acc)
+        if num_prop == 1:
+            eval_ppx = math.exp(float(acms.get("eval_loss", bucket_id)
+                                      .value)) if eval_loss < 300 else float("inf")
+        else:
+            eval_ppx = math.exp(float(acms[0].get("eval_loss", bucket_id)
+                                      .value)) if eval_loss < 300 else float("inf")
         logging.info(
             "  eval: bucket %d perplexity %.6f" % (bucket_id, eval_ppx))
-
-        logging.info("  eval: " + ",".join([
-            "%s %.6e " % (key, val[bucket_id].value)
-            for key, val in acms.acumulators.items()
-        ]))
+        if num_prop ==1:
+            logging.info("  eval: " + ",".join([
+                "%s %.6e " % (key, val[bucket_id].value)
+                for key, val in acms.acumulators.items()
+            ]))
+        else:
+            for i in range(num_prop):
+                logging.info("  eval: Property(%d) "% (i+1) +  ",".join([
+                    "%s %.6e " % (key, val[bucket_id].value)
+                    for key, val in acms[i].acumulators.items()
+                ]))
 
     # Add summary and calculate the overall evaluation metrics.
-    overall_acms = add_eval_summary(test_writer, model.global_step.eval(),
-                                    acms.acumulators)
-    logging.info("  eval: overall " + ", ".join(
-        ["%s %.4e" % (k, v.value) for k, v in overall_acms.items()]))
+    if num_prop ==1:
+        overall_acms = add_eval_summary(test_writer, model.global_step.eval(),
+                                        acms.acumulators)
+        logging.info("  eval: overall " + ", ".join(
+            ["%s %.4e" % (k, v.value) for k, v in overall_acms.items()]))
+    else:
+        overall_acms = []
+        for i in range(num_prop):
+            overall_acms.append(add_eval_summary(test_writer, model.global_step.eval(),
+                                        acms[i].acumulators))
+            logging.info("  eval: overall Property(%d) " % (i+1) + ", ".join(
+                ["%s %.4e" % (k, v.value) for k, v in overall_acms[i].items()]))
 
 
 def train(  # pylint: disable=too-many-locals,too-many-statements,too-many-arguments
@@ -242,16 +286,17 @@ def train(  # pylint: disable=too-many-locals,too-many-statements,too-many-argum
 
         buckets = model.buckets
         reg = model.reg
+        num_prop = model.num_prop
         alpha = model.alpha  # Get coefficient for combined loss function
         label_states = model.hparams.label_states
 
         # Read data into buckets and compute their sizes.
         if model.hparams.label_states:
             logging.info("Reading train data from %s..." % train_data)
-            train_label_set = read_data_labels(train_data, train_labels, reg,
+            train_label_set = read_data_labels(train_data, train_labels, reg, num_prop,
                                                buckets)
             logging.info("Reading test data from %s..." % test_data)
-            test_label_set = read_data_labels(test_data, test_labels, reg, buckets)
+            test_label_set = read_data_labels(test_data, test_labels, reg, num_prop, buckets)
         else:
             logging.info("Reading train data from %s..." % train_data)
             train_label_set = read_data(train_data, buckets)
@@ -328,6 +373,7 @@ def train(  # pylint: disable=too-many-locals,too-many-statements,too-many-argum
                     test_label_set,
                     model,
                     label_states,
+                    num_prop,
                     test_writer=test_writer,
                     sess=sess)
                 sys.stdout.flush()
