@@ -66,6 +66,15 @@ We includes few training examples using `smilectl` script in [examples/](example
 ## References:
 If our work is helpful for your research, please consider citing:
 ```bash
+@inproceedings{zhang2018seq3seq,
+  title={Seq3seq fingerprint: towards end-to-end semi-supervised deep drug discovery},
+  author={Zhang, Xiaoyu and Wang, Sheng and Zhu, Feiyun and Xu, Zheng and Wang, Yuhong and Huang, Junzhou},
+  booktitle={Proceedings of the 2018 ACM International Conference on Bioinformatics, Computational Biology, and Health Informatics},
+  pages={404--413},
+  year={2018},
+  organization={ACM}
+}
+
 @article{xu2017seq2seqfingerprint,
   title={Seq2seq Fingerprint: An Unsupervised Deep Molecular Embedding for Drug Discovery},
   author={Zheng Xu, Sheng Wang, Feiyun Zhu, and Junzhou Huang},
