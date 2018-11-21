@@ -319,7 +319,7 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
             for b in range(len(buckets)):
                 loss = self.losses[b] if hparams.use_recovery else 0.
                 if self.label_states:
-                    loss += self.alpha * self.loss_supervised[b]
+                    loss = (1.0- self.alpha)*loss + self.alpha * self.loss_supervised[b]
                 gradients = tf.gradients(loss, params)
                 clipped_gradients, norm = tf.clip_by_global_norm(
                     gradients, hparams.max_gradient_norm)
@@ -548,8 +548,13 @@ class Seq3SeqModel(object):  # pylint: disable=too-many-instance-attributes
                 random.choice(data[bucket_id]) for _ in range(self.batch_size)
             ]
         else:
-            sample_size = min(len(data[bucket_id]), self.batch_size)
-            raw_sampled_batch = random.sample(data[bucket_id], sample_size)
+            #sample_size = min(len(data[bucket_id]), self.batch_size)
+            #raw_sampled_batch = random.sample(data[bucket_id], sample_size)
+            if len(data[bucket_id])< self.batch_size:
+                raw_sampled_batch = [
+                random.choice(data[bucket_id]) for _ in range(self.batch_size)]
+            else:
+                raw_sampled_batch = random.sample(data[bucket_id], self.batch_size)
         real_batch_size = len(raw_sampled_batch)
 
         # Get a random batch of encoder and decoder inputs from data,

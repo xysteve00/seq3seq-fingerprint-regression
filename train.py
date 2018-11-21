@@ -345,7 +345,7 @@ def train(  # pylint: disable=too-many-locals,too-many-statements,too-many-argum
                 train_writer, False, False, labels)
             step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
             loss += (
-                step_loss + alpha * step_loss_sup) / FLAGS.steps_per_checkpoint
+                (1.0-alpha)*step_loss + alpha * step_loss_sup) / FLAGS.steps_per_checkpoint
             current_step += 1
             # Once in a while, we save checkpoint, print statistics, and run evals.
             if current_step % FLAGS.steps_per_checkpoint == 0:
