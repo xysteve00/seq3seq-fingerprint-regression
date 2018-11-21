@@ -1,6 +1,6 @@
 # Seq3seq-fingerprint
 
-This code implements seq3seq fingerprint method, which will be published soon in ACM BCB 2018.
+This code implements seq3seq fingerprint method, the paper and results were published by ACM BCB 2018.
 
 ## Installation
 
